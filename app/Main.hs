@@ -1,4 +1,4 @@
-{-# LANGUAGE DuplicateRecordFields,OverloadedStrings,TemplateHaskell, ExtendedDefaultRules #-}
+{-# LANGUAGE OverloadedStrings, ExtendedDefaultRules #-}
 
 module Main where
 
