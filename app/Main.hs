@@ -1,4 +1,4 @@
-{-# LANGUAGE DuplicateRecordFields,OverloadedStrings,TemplateHaskell, ExtendedDefaultRules, FlexibleContexts,NoMonomorphismRestriction  #-}
+{-# LANGUAGE DuplicateRecordFields,OverloadedStrings,TemplateHaskell, ExtendedDefaultRules #-}
 
 module Main where
 import Control.Monad
@@ -9,11 +9,21 @@ import Control.Applicative hiding (many)
 import SuffixLenses (suffixLenses)
 import Lens.Micro   ((^.), (&), (.~), (%~))
 
-import Data.Monoid
+-- import Data.Monoid
 import Data.Maybe
 
 import Data.Char
 import Text.ParserCombinators.ReadP hiding (get)
+
+
+import Database.MongoDB hiding (modify)
+import Data.Text (pack, unpack, Text)
+
+import Control.Monad.Trans (liftIO)
+import Text.Printf
+import System.Environment (getArgs)
+
+import Control.Exception
 
 data Mystate = Mystate {
                persons::[Person]
@@ -33,7 +43,6 @@ data StateName = Init
 data Person = Person {
               name::Name
             , weight::Weight
-
               } deriving (Show,Eq)
 
 type Name = [Char]
@@ -62,12 +71,12 @@ modifyConf c = case c of
                                         remainingInputL .~ rem   &
                                         currNameL .~ pure pname
                    Left _ -> Inter Init . removeHead $ st
- 
+
  Inter AcceptSpaces1 st ->  case parse parseSpaces (st ^. remainingInputL) of
                    Right (_,rem) -> Inter AcceptWeight $ st &
                                     remainingInputL .~ rem
                    Left _ -> Inter Init . gotoInitState $ st
- 
+
  Inter AcceptWeight st -> case parse parseFloat (st ^. remainingInputL) of
                    Right (pweight,rem) -> Inter AcceptKg $
                              st & remainingInputL .~ rem & 
@@ -84,7 +93,6 @@ modifyConf c = case c of
                                                                       (personsL %~ ((Person cn cw):))
                                         _->Inter Init .gotoInitState $ st
                    Left _ -> Inter Init . gotoInitState $ st
-
 
 
 getHead::Mystate->Char
@@ -118,7 +126,6 @@ parseKg = do
      many (char ' ')
      string "kg"
 
-
 parse::ReadP a-> String-> Either String (a,String)
 parse p s = case readP_to_S p s of
  [] -> Left s
@@ -130,14 +137,48 @@ getPersons (Final st) = st ^. personsL
 getPersons _ = []
 
 
-u = undefined
-
 -- | makes initial configuration from a given string
 makeInitConf::String->Conf
 makeInitConf = Inter Init . Mystate mempty mempty Nothing 
 
+validate::[Person]->[Person]
+validate = filter (\(Person _ w) -> w >= minWeight && w<= maxWeight)
 
-i = "this/ si /@3 3432 djw2tony 32kg ewij#hari 75kg$jda"
+minWeight = 0.02
+maxWeight = 300
+
+
+dbName = "PersonDetails"
+
+runMongo dbName functionToRun = do
+  pipe <- connect (host "127.0.0.1")
+  e <- access pipe master (pack dbName) functionToRun
+  close pipe
+
+
+personToDoc::Person->Document
+personToDoc (Person n w)= [(pack "name") := (val n),(pack "weight") := (val w)]
+
 
 main :: IO ()
-main = print "dfd"
+main = do
+ args <-  getArgs
+ case args of 
+  []-> print "**exception::no argument povided atleat one required"
+  xs -> mapM_ processArg xs
+
+processArg::FilePath->IO ()
+processArg arg = do
+ recs <-fmap (personToDoc <$>) .getRecords $ arg
+ runMongo dbName $ insertMany "persons" recs
+
+
+getRecords fname = do
+ content <- safeLoadFile fname 
+ case parseStr <$> content of 
+  Right records -> return $ validate records 
+  _ -> liftIO (print $ "***error:: bad argument provided can't read file named :: "++fname) >> return mempty
+
+
+safeLoadFile :: FilePath -> IO (Either IOException String)
+safeLoadFile f = (Right <$> readFile f) `catch` (\ e -> pure (Left e) )
